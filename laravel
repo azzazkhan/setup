@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# =============================================================================
+# Laravel Project Setup Script
+# Automates: Prettier, Husky, lint-staged, Pint config, helper files,
+#            MCP config, artisan commands, concerns, enums, and composer
+#            autoloading setup.
+#
+# Usage:
+#   curl -fsSL https://setup.azzaz.dev/laravel.sh | bash
+#   # or
+#   bash setup-laravel.sh [project-directory]
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+BASE_URL="${LARAVEL_SETUP_BASE_URL:-https://setup.azzaz.dev/laravel}"
+PROJECT_DIR="${1:-$(pwd)}"
+
+# Files to download (relative paths from project root)
+FILES=(
+    ".editorconfig"
+    ".husky/pre-commit"
+    ".mcp.json"
+    ".prettierrc"
+    "lint-staged.config.ts"
+    "pint.json"
+    "app/Console/Commands/GeneratePintConfig.php"
+    "app/Concerns/Eloquent/HasSelfHealingUrl.php"
+    "app/Concerns/Enum/Resolvable.php"
+    "app/Enums/Pagination.php"
+    "helpers/CStr.php"
+    "helpers/functions.php"
+)
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+info()    { echo -e "${BLUE}[INFO]${NC} $*"; }
+success() { echo -e "${GREEN}[OK]${NC} $*"; }
+warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
+error()   { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
+
+command_exists() { command -v "$1" &>/dev/null; }
+
+download() {
+    local url="$1"
+    local dest="$2"
+
+    mkdir -p "$(dirname "$dest")"
+
+    if command_exists curl; then
+        curl -fsSL "$url" -o "$dest"
+    elif command_exists wget; then
+        wget -qO "$dest" "$url"
+    else
+        error "Neither curl nor wget found. Cannot download files."
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Pre-flight checks
+# ---------------------------------------------------------------------------
+cd "$PROJECT_DIR" || error "Cannot cd into $PROJECT_DIR"
+
+[[ -f "artisan" ]]      || error "Not a Laravel project (artisan not found in $PROJECT_DIR)"
+[[ -f "composer.json" ]] || error "composer.json not found"
+[[ -f "package.json" ]]  || error "package.json not found"
+
+# Detect package manager (bun > npm)
+if command_exists bun; then
+    PM="bun"
+    PM_INSTALL="bun add -d"
+elif command_exists npm; then
+    PM="npm"
+    PM_INSTALL="npm install --save-dev"
+else
+    error "No JS package manager found. Install bun or npm."
+fi
+
+info "Using package manager: $PM"
+info "Downloading files from: $BASE_URL"
+
+# ===========================================================================
+# 1. Install JS dev dependencies
+# ===========================================================================
+info "Installing JS dev dependencies..."
+
+JS_PACKAGES=(
+    "@types/node"
+    "prettier"
+    "prettier-plugin-organize-imports"
+    "husky"
+    "lint-staged"
+)
+
+# Add @types/bun only when using bun
+if [[ "$PM" == "bun" ]]; then
+    JS_PACKAGES+=("@types/bun")
+fi
+
+$PM_INSTALL "${JS_PACKAGES[@]}"
+success "JS dependencies installed"
+
+# ===========================================================================
+# 2. Setup Husky
+# ===========================================================================
+info "Setting up Husky..."
+
+# Initialize husky (adds prepare script + .husky dir automatically)
+npx husky init 2>/dev/null || true
+
+success "Husky initialized"
+
+# ===========================================================================
+# 3. Download all project files
+# ===========================================================================
+info "Downloading project files..."
+
+for file in "${FILES[@]}"; do
+    download "${BASE_URL}/${file}" "$file"
+    success "Downloaded $file"
+done
+
+chmod +x .husky/pre-commit
+
+# ===========================================================================
+# 4. Merge Prettier config with existing Tailwind settings
+# ===========================================================================
+info "Merging Prettier configuration..."
+
+node -e "
+const fs = require('fs');
+const path = '.prettierrc';
+
+// Read the downloaded base config
+const base = JSON.parse(fs.readFileSync(path, 'utf8'));
+
+// Check if there was a backup of existing config before download
+// The downloaded file IS the desired config, but we want to preserve
+// any existing tailwind-specific overrides that differ from defaults
+// Since we just downloaded fresh, the config is already correct.
+// Just ensure tailwindcss plugin is last in the plugins array.
+const plugins = (base.plugins || []).filter(p => p !== 'prettier-plugin-tailwindcss');
+plugins.push('prettier-plugin-tailwindcss');
+base.plugins = [...new Set(plugins)];
+
+fs.writeFileSync(path, JSON.stringify(base, null, 4) + '\n');
+"
+
+success "Prettier config ready"
+
+# ===========================================================================
+# 5. Update composer.json (merge autoload + scripts)
+# ===========================================================================
+info "Updating composer.json..."
+
+node -e "
+const fs = require('fs');
+const composer = JSON.parse(fs.readFileSync('composer.json', 'utf8'));
+
+// Add Helpers PSR-4 autoload
+composer.autoload = composer.autoload || {};
+composer.autoload['psr-4'] = composer.autoload['psr-4'] || {};
+if (!composer.autoload['psr-4']['Helpers\\\\']) {
+    composer.autoload['psr-4']['Helpers\\\\'] = 'helpers/';
+}
+
+// Add helpers/functions.php to files autoload
+composer.autoload.files = composer.autoload.files || [];
+if (!composer.autoload.files.includes('helpers/functions.php')) {
+    composer.autoload.files.push('helpers/functions.php');
+}
+
+// Add format script
+composer.scripts = composer.scripts || {};
+if (!composer.scripts.format) {
+    composer.scripts.format = [
+        '@php artisan pint:config .',
+        './vendor/bin/pint --config pint.json',
+        './vendor/bin/pint config --config storage/pint/config.json',
+        './vendor/bin/pint database/migrations --config storage/pint/migrations.json'
+    ];
+}
+
+fs.writeFileSync('composer.json', JSON.stringify(composer, null, 4) + '\n');
+"
+
+success "composer.json updated"
+
+# ===========================================================================
+# 6. Run composer dump-autoload
+# ===========================================================================
+info "Regenerating autoload files..."
+composer dump-autoload --quiet
+success "Autoload regenerated"
+
+# ===========================================================================
+# Done
+# ===========================================================================
+echo ""
+echo -e "${GREEN}=============================================${NC}"
+echo -e "${GREEN}  Laravel project setup complete!${NC}"
+echo -e "${GREEN}=============================================${NC}"
+echo ""
+echo "Files created/updated:"
+echo "  - .editorconfig"
+echo "  - .husky/pre-commit"
+echo "  - .prettierrc (merged)"
+echo "  - .mcp.json"
+echo "  - lint-staged.config.ts"
+echo "  - pint.json"
+echo "  - app/Console/Commands/GeneratePintConfig.php"
+echo "  - app/Concerns/Eloquent/HasSelfHealingUrl.php"
+echo "  - app/Concerns/Enum/Resolvable.php"
+echo "  - app/Enums/Pagination.php"
+echo "  - helpers/CStr.php"
+echo "  - helpers/functions.php"
+echo "  - composer.json (autoload + format script)"
+echo ""
+echo "Next steps:"
+echo "  1. Review the changes with: git diff"
+echo "  2. Run 'php artisan pint:config' to generate sub-configs"
+echo "  3. Commit the changes"
