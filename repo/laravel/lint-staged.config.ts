@@ -13,16 +13,18 @@ const prettier = (filenames: readonly string[]) => {
     });
 };
 
-const eslint = (filenames: readonly string[]) => {
-    return filenames.map((filename) => {
-        return [
-            'eslint --fix',
-            '--config',
-            path.join(process.cwd(), 'eslint.config.js'),
-            filename,
-        ].join(' ');
-    });
-};
+// const eslint = (filenames: readonly string[]) => {
+//     return filenames.map((filename) => {
+//         return [
+//             'eslint --fix',
+//             '--config',
+//             path.join(process.cwd(), 'eslint.config.js'),
+//             filename,
+//         ].join(' ');
+//     });
+// };
+
+const eslint = () => []
 
 const pint =
     (config = 'pint.json') =>
