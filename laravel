@@ -99,6 +99,7 @@ JS_PACKAGES=(
     "@types/node"
     "prettier"
     "prettier-plugin-organize-imports"
+    "prettier-plugin-tailwindcss"
     "husky"
     "lint-staged"
 )
