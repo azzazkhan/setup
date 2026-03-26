@@ -16,7 +16,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-BASE_URL="${LARAVEL_SETUP_BASE_URL:-https://setup.azzaz.dev/laravel}"
+BASE_URL="${LARAVEL_SETUP_BASE_URL:-https://setup.azzaz.dev/repo/laravel}"
 PROJECT_DIR="${1:-$(pwd)}"
 
 # Files to download (relative paths from project root)
